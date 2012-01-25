@@ -25,7 +25,6 @@
 			);
 			dependencies = (
 				1C6B2F700FEC62F9004F1935 /* PBXTargetDependency */,
-				1C6B2F6E0FEC62F9004F1935 /* PBXTargetDependency */,
 				1C6B2F6C0FEC62F9004F1935 /* PBXTargetDependency */,
 				1C6B2F6A0FEC62F9004F1935 /* PBXTargetDependency */,
 				1C6B2F680FEC62F9004F1935 /* PBXTargetDependency */,
@@ -559,6 +558,7 @@
 		1CC368470FF02CD6009818B0 /* sftp-server.c in Sources */ = {isa = PBXBuildFile; fileRef = 1C6B2F370FEC5E93004F1935 /* sftp-server.c */; };
 		1CC3684A0FF02D09009818B0 /* progressmeter.c in Sources */ = {isa = PBXBuildFile; fileRef = 1C6B2F1D0FEC5CFE004F1935 /* progressmeter.c */; };
 		1CC3686F0FF02FE3009818B0 /* sftp-common.c in Sources */ = {isa = PBXBuildFile; fileRef = 1C6B2F350FEC5E93004F1935 /* sftp-common.c */; };
+		1DF455DB14CFD16000B133D9 /* ssh-pkcs11.c in Sources */ = {isa = PBXBuildFile; fileRef = 1C919EDB1162C3E4002924A5 /* ssh-pkcs11.c */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -764,13 +764,6 @@
 			proxyType = 1;
 			remoteGlobalIDString = 1C6B2E8E0FEC5AEB004F1935;
 			remoteInfo = "ssh-add";
-		};
-		1C6B2F6D0FEC62F9004F1935 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 08FB7793FE84155DC02AAC07 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 1C6B2E810FEC5AD3004F1935;
-			remoteInfo = sshd;
 		};
 		1C6B2F6F0FEC62F9004F1935 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -2516,6 +2509,7 @@
 				1C6B2FEB0FEFFB7A004F1935 /* msg.c in Sources */,
 				1C6B2FF00FEFFB7A004F1935 /* schnorr.c in Sources */,
 				1C6B2FF10FEFFB7A004F1935 /* umac.c in Sources */,
+				1DF455DB14CFD16000B133D9 /* ssh-pkcs11.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2819,11 +2813,6 @@
 			isa = PBXTargetDependency;
 			target = 1C6B2E8E0FEC5AEB004F1935 /* ssh-add */;
 			targetProxy = 1C6B2F6B0FEC62F9004F1935 /* PBXContainerItemProxy */;
-		};
-		1C6B2F6E0FEC62F9004F1935 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 1C6B2E810FEC5AD3004F1935 /* sshd */;
-			targetProxy = 1C6B2F6D0FEC62F9004F1935 /* PBXContainerItemProxy */;
 		};
 		1C6B2F700FEC62F9004F1935 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -3147,7 +3136,10 @@
 				HEADER_SEARCH_PATHS = "";
 				INSTALL_GROUP = wheel;
 				INSTALL_OWNER = root;
-				OTHER_CFLAGS = "-fpie";
+				OTHER_CFLAGS = (
+					"-fpie",
+					"-DENABLE_PKCS11",
+				);
 				OTHER_LDFLAGS = "";
 				"OTHER_LDFLAGS[sdk=macosx*][arch=*]" = (
 					"-framework",
@@ -3408,7 +3400,10 @@
 				INSTALL_GROUP = wheel;
 				INSTALL_OWNER = root;
 				ONLY_ACTIVE_ARCH = YES;
-				OTHER_CFLAGS = "-fpie";
+				OTHER_CFLAGS = (
+					"-DENABLE_PKCS11",
+					"-fpie",
+				);
 				OTHER_LDFLAGS = "";
 				"OTHER_LDFLAGS[sdk=macosx*][arch=*]" = (
 					"-framework",

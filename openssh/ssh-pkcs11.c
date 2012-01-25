@@ -40,9 +40,6 @@
 #include "ssh-pkcs11.h"
 #include "xmalloc.h"
 
-int extract_key_from_cert(unsigned char* cert, int certsize, unsigned char **expo, unsigned char** modu,
-                          int* elen, int* mlen);
-
 struct pkcs11_slotinfo {
 	CK_TOKEN_INFO		token;
 	CK_SESSION_HANDLE	session;
@@ -62,7 +59,7 @@ struct pkcs11_provider {
 	TAILQ_ENTRY(pkcs11_provider) next;
 };
 
-TAILQ_HEAD(, pkcs11_provider) pkcs11_providers;
+TAILQ_HEAD(, pkcs11_provider) pkcs11_providers = TAILQ_HEAD_INITIALIZER(pkcs11_providers);
 
 struct pkcs11_key {
 	struct pkcs11_provider	*provider;
@@ -281,7 +278,7 @@ pkcs11_rsa_private_encrypt(int flen, const u_char *from, u_char *to, RSA *rsa,
 	/* try to find object w/CKA_SIGN first, retry w/o */
 	if (pkcs11_find(k11->provider, k11->slotidx, key_filter, 3, &obj) < 0 &&
 	    pkcs11_find(k11->provider, k11->slotidx, key_filter, 2, &obj) < 0 &&
-	    pkcs11_find(k11->provider, k11->slotidx, key_filter, 1, &obj) < 0) {
+            pkcs11_find(k11->provider, k11->slotidx, key_filter, 1, &obj) < 0) {
 		error("cannot find private key");
 	} else if ((rv = f->C_SignInit(si->session, &mech, obj)) != CKR_OK) {
 		error("C_SignInit failed: %lu", rv);
@@ -384,190 +381,6 @@ pkcs11_open_session(struct pkcs11_provider *p, CK_ULONG slotidx, char *pin)
 	return (0);
 }
 
-
-
-int find_substring(char* haystack, long haysize, const char* needle, long needlesize)
-{
-    int i, j;
-    
-    for (i=0; i< haysize-needlesize; i++) {
-        for (j=0; j < needlesize; j++) {
-            if (*(haystack+i+j) != *(needle+j)) {
-                goto nope;
-            }
-        }
-        return i;
-    nope:
-        j=0;
-    }
-    return -1;
-}
-
-/* Given a handle pointing to an asn.1 BER/DER length field, return
- the length as an unsigned integer and update the handle to point
- just past the length.  Note that this obviously will fail horribly
- if the length field is larger than the size of an unsigned int; in
- which case it returns ~0 (-1). */
-
-unsigned int asn1_length(unsigned char** cursor) {
-    if (**cursor & 0x80) {
-        /* long form */
-        unsigned int length = 0;
-        unsigned int lenlen = 0x7f & *((*cursor)++);
-        unsigned int i;
-        if (lenlen > sizeof (unsigned int)) { return ~0; }
-        for (i=0; i< lenlen; i++) {
-            length = ((length)<<8) + *((*cursor)++);
-        }
-        return length;
-    } else {
-        /* short form */
-        return (unsigned int) *((*cursor)++);
-    }
-}
-
-static const char OIDrsaEncryption[] = { 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00 };
-
-/* x509 Certificates are encoded in ASN.1 DER form */
-
-/* find exponent and modulus (and lengths thereof) inside a cert.
- return 1 on success, 0 on failure */
-int extract_key_from_cert(unsigned char* cert, int certsize, unsigned char **expo, unsigned char** modu,
-                          int* elen, int* mlen) {
-    unsigned char *cursor = cert;
-    int oidpos;
-    oidpos = find_substring(cursor, certsize, OIDrsaEncryption, sizeof(OIDrsaEncryption));
-    
-    if (oidpos != -1) {
-        cursor += oidpos;
-        
-        /* the OID, plus the NULL, consume 12 bytes */
-        cursor += 12; /* skip OID and NULL */
-        cursor += 2; /* skip 1st BIT STRING header */
-        asn1_length(&cursor); /* skip length of 1st BIT STRING header */
-        cursor += 2; /* skip 2nd BIT STRING header */
-        asn1_length(&cursor); /* skip length of 2nd BIT STRING header */
-        /* now we should be at the start of the ASN1 INTEGER for the pubkey (whew!) */
-        if (02 == *(cursor++)) {
-            *mlen = asn1_length(&cursor);
-            if (*mlen == ~0) {return 0;}
-            *modu = cursor;
-            cursor += *mlen;
-            if (02 == *(cursor++)) {
-                *elen = asn1_length(&cursor);
-                if (*elen == ~0) {return 0;}
-                *expo = cursor;
-                return 1;
-            }
-        }
-    }
-    *expo = NULL;
-    *modu = NULL;
-    return 0;
-}
-
-static int fetch_pubkeys_from_certs(struct pkcs11_provider *p, CK_ULONG slotidx, Key ***keysp, int *nkeys)
-{
-	Key			*key;
-	RSA			*rsa;
-	int			i;
-	CK_RV			rv;
-	CK_OBJECT_HANDLE	obj;
-	CK_ULONG		nfound;
-	CK_SESSION_HANDLE	session;
-	CK_FUNCTION_LIST	*f;
-
-    unsigned char *expop, *modup;
-    int elen, mlen;
-
-    CK_OBJECT_CLASS		key_class = CKO_CERTIFICATE;
-	CK_ATTRIBUTE		key_filter[] = {
-		{ CKA_CLASS, NULL, sizeof(key_class) }
-	};
-	CK_ATTRIBUTE		attribs[] = {
-		{ CKA_LABEL, NULL, 0 },
-		{ CKA_ID, NULL, 0 },
-		{ CKA_VALUE, NULL, 0 }
-	};
-    
-	/* some compilers complain about non-constant initializer so we
-     use NULL in CK_ATTRIBUTE above and set the value here */
-	key_filter[0].pValue = &key_class;
-
-
-    f = p->function_list;
-	session = p->slotinfo[slotidx].session;
-	/* setup a filter the looks for public keys */
-	if ((rv = f->C_FindObjectsInit(session, key_filter, 1)) != CKR_OK) {
-		error("C_FindObjectsInit failed: %lu", rv);
-		return (-1);
-	}
-	while (1) {
-		/* XXX 3 attributes in attribs[] */
-		for (i = 0; i < 3; i++) {
-			attribs[i].pValue = NULL;
-			attribs[i].ulValueLen = 0;
-		}
-        rv = f->C_FindObjects(session,&obj, 1, &nfound );
-		if (rv != CKR_OK
-		    || nfound == 0)
-			break;
-		/* found a key, so figure out size of the attributes */
-		if ((rv = f->C_GetAttributeValue(session, obj, attribs, 3))
-		    != CKR_OK) {
-			error("C_GetAttributeValue failed: %lu", rv);
-			continue;
-		}
-		/* check that none of the attributes are zero length */
-		if (attribs[0].ulValueLen == 0 ||
-		    attribs[1].ulValueLen == 0 ||
-		    attribs[2].ulValueLen == 0) {
-			continue;
-		}
-		/* allocate buffers for attributes */
-		for (i = 0; i < 3; i++)
-			attribs[i].pValue = xmalloc(attribs[i].ulValueLen);
-		/* retrieve ID, modulus and public exponent of RSA key */
-		if ((rv = f->C_GetAttributeValue(session, obj, attribs, 3))
-		    != CKR_OK) {
-			error("C_GetAttributeValue failed: %lu", rv);
-		} else {
-            // Found a cert, extract the pubkey
-
-            extract_key_from_cert(attribs[2].pValue, attribs[2].ulValueLen,
-                                  &expop, &modup,
-                                  &elen, &mlen);            
-            if ((rsa = RSA_new()) == NULL) {
-                error("RSA_new failed");
-            } else {
-                rsa->n = BN_bin2bn(modup, mlen, NULL);
-                rsa->e = BN_bin2bn(expop, elen, NULL);
-                if (rsa->n && rsa->e &&
-                    pkcs11_rsa_wrap(p, slotidx, &attribs[1], rsa) == 0) {
-                    key = key_new(KEY_UNSPEC);
-                    key->rsa = rsa;
-                    key->type = KEY_RSA;
-                    key->flags |= KEY_FLAG_EXT;
-                    /* expand key array and add key */
-                    *keysp = xrealloc(*keysp, *nkeys + 1,
-                                  sizeof(Key *));
-                    (*keysp)[*nkeys] = key;
-                    *nkeys = *nkeys + 1;
-                    debug("have %d keys", *nkeys);
-                } else {
-                    RSA_free(rsa);
-                }
-            }
-		}
-		for (i = 0; i < 3; i++)
-			xfree(attribs[i].pValue);
-	}
-	if ((rv = f->C_FindObjectsFinal(session)) != CKR_OK)
-		error("C_FindObjectsFinal failed: %lu", rv);
-    
-    return 0;
-    
-}
 /*
  * lookup public keys for token in slot identified by slotidx,
  * add 'wrapped' public keys to the 'keysp' array and increment nkeys.
@@ -579,6 +392,7 @@ pkcs11_fetch_keys(struct pkcs11_provider *p, CK_ULONG slotidx, Key ***keysp,
 {
 	Key			*key;
 	RSA			*rsa;
+	X509 			*x509;
 	int			i;
 	CK_RV			rv;
 	CK_OBJECT_HANDLE	obj;
@@ -586,18 +400,28 @@ pkcs11_fetch_keys(struct pkcs11_provider *p, CK_ULONG slotidx, Key ***keysp,
 	CK_SESSION_HANDLE	session;
 	CK_FUNCTION_LIST	*f;
 	CK_OBJECT_CLASS		pubkey_class = CKO_PUBLIC_KEY;
+	CK_OBJECT_CLASS		cert_class = CKO_CERTIFICATE;
 	CK_ATTRIBUTE		pubkey_filter[] = {
 		{ CKA_CLASS, NULL, sizeof(pubkey_class) }
+	};
+	CK_ATTRIBUTE		cert_filter[] = {
+		{ CKA_CLASS, NULL, sizeof(cert_class) }
 	};
 	CK_ATTRIBUTE		attribs[] = {
 		{ CKA_ID, NULL, 0 },
 		{ CKA_MODULUS, NULL, 0 },
 		{ CKA_PUBLIC_EXPONENT, NULL, 0 }
 	};
+	CK_ATTRIBUTE attribs_cert[] = {
+		{ CKA_ID, NULL, 0 },
+		{ CKA_SUBJECT, NULL, 0 },
+		{ CKA_VALUE, NULL, 0 },
+	};
 
 	/* some compilers complain about non-constant initializer so we
 	   use NULL in CK_ATTRIBUTE above and set the value here */
 	pubkey_filter[0].pValue = &pubkey_class;
+	cert_filter[0].pValue = &cert_class;
 
 	f = p->function_list;
 	session = p->slotinfo[slotidx].session;
@@ -662,12 +486,84 @@ pkcs11_fetch_keys(struct pkcs11_provider *p, CK_ULONG slotidx, Key ***keysp,
 	}
 	if ((rv = f->C_FindObjectsFinal(session)) != CKR_OK)
 		error("C_FindObjectsFinal failed: %lu", rv);
-    
-    if ( *nkeys == 0 )
-    {
-        // Couldn't find any public keys, let's find some some certs and extract the public key
-        return fetch_pubkeys_from_certs( p, slotidx, keysp, nkeys);
-    }
+
+	debug("Search X509");
+	f = p->function_list;
+	session = p->slotinfo[slotidx].session;
+	/* setup a filter the looks for certificates */
+	if ((rv = f->C_FindObjectsInit(session, cert_filter, 1)) != CKR_OK) {
+		error("C_FindObjectsInit failed: %lu", rv);
+		return (-1);
+	}
+	while (1) {
+		/* XXX 3 attributes in attribs[] */
+		for (i = 0; i < 3; i++) {
+			attribs_cert[i].pValue = NULL;
+			attribs_cert[i].ulValueLen = 0;
+		}
+		if ((rv = f->C_FindObjects(session, &obj, 1, &nfound)) != CKR_OK
+		    || nfound == 0)
+			break;
+		/* found a key, so figure out size of the attributes */
+		if ((rv = f->C_GetAttributeValue(session, obj, attribs_cert, 3))
+		    != CKR_OK) {
+			error("C_GetAttributeValue failed: %lu", rv);
+			continue;
+		}
+		/* check that none of the attributes are zero length */
+		if (attribs_cert[0].ulValueLen == 0 ||
+		    attribs_cert[1].ulValueLen == 0 ||
+		    attribs_cert[2].ulValueLen == 0) {
+			continue;
+		}
+		/* allocate buffers for attributes */
+		for (i = 0; i < 3; i++)
+			attribs_cert[i].pValue = xmalloc(attribs_cert[i].ulValueLen);
+		/* retrieve LABEL, SUBJECT and VALUE of X509 cert */
+		if ((rv = f->C_GetAttributeValue(session, obj, attribs_cert, 3))
+		    != CKR_OK) {
+			error("C_GetAttributeValue failed: %lu", rv);
+		} else if ((x509 = X509_new()) == NULL) {
+			error("X509_new failed");
+		} else {
+
+			CK_BYTE_PTR der_value;
+			CK_BYTE_PTR ptr;
+			CK_ULONG n_der_value;
+			EVP_PKEY *pubkey = NULL;
+
+			n_der_value = attribs_cert[2].ulValueLen;
+			ptr = attribs_cert[2].pValue;
+			x509 = d2i_X509(NULL, (const unsigned char**)&ptr, n_der_value);
+			if(x509 == NULL) {
+				debug("CKA_VALUE:Error");
+			} else {
+				//PEM_write_X509(stdout, x509);
+				pubkey = X509_get_pubkey(x509);
+				rsa = pubkey->pkey.rsa;
+
+				if (rsa->n && rsa->e &&
+				    pkcs11_rsa_wrap(p, slotidx, &attribs_cert[0], rsa) == 0) {
+					key = key_new(KEY_UNSPEC);
+					key->rsa = rsa;
+					key->type = KEY_RSA;
+					key->flags |= KEY_FLAG_EXT;
+					/* expand key array and add key */
+					*keysp = xrealloc(*keysp, *nkeys + 1,
+					    sizeof(Key *));
+					(*keysp)[*nkeys] = key;
+					*nkeys = *nkeys + 1;
+					debug("have %d x509 keys", *nkeys);
+				} else {
+					RSA_free(rsa);
+				}
+			}
+		}
+		for (i = 0; i < 3; i++)
+			xfree(attribs_cert[i].pValue);
+	}
+	if ((rv = f->C_FindObjectsFinal(session)) != CKR_OK)
+		error("C_FindObjectsFinal failed: %lu", rv);
 	return (0);
 }
 
