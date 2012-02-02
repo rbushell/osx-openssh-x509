@@ -71,6 +71,8 @@ struct pkcs11_key {
 };
 
 int pkcs11_interactive = 0;
+int 
+pkcs11_check_session ( struct pkcs11_provider *p, CK_ULONG slotidx);
 
 int
 pkcs11_init(int interactive)
@@ -252,8 +254,15 @@ pkcs11_rsa_private_encrypt(int flen, const u_char *from, u_char *to, RSA *rsa,
 		error("no pkcs11 (valid) provider for rsa %p", rsa);
 		return (-1);
 	}
+    
+    if ( pkcs11_check_session(k11->provider, k11->slotidx ))
+    {
+        error ( "Invalid session" );
+    }
+   
 	f = k11->provider->function_list;
 	si = &k11->provider->slotinfo[k11->slotidx];
+
 	if ((si->token.flags & CKF_LOGIN_REQUIRED) && !si->logged_in) {
 		if (!pkcs11_interactive) {
 			error("need pin");
@@ -343,6 +352,8 @@ rmspace(char *buf, size_t len)
 			break;
 }
 
+        
+
 /*
  * open a pkcs11 session and login if required.
  * if pin == NULL we delay login until key use
@@ -379,6 +390,24 @@ pkcs11_open_session(struct pkcs11_provider *p, CK_ULONG slotidx, char *pin)
 	}
 	p->slotinfo[slotidx].session = session;
 	return (0);
+}
+int 
+pkcs11_check_session ( struct pkcs11_provider *p, CK_ULONG slotidx)
+{
+    CK_SESSION_INFO session_info;
+    CK_FUNCTION_LIST	*f;
+    char *pin = 
+    f = p->function_list;
+    
+    if ( f->C_GetSessionInfo ( p->slotinfo[slotidx].session, &session_info ) != CKR_OK )
+    {
+      //  p->slotinfo[slotidx].is_logged_in = 0;
+#ifdef __APPLE_KEYCHAIN__
+        char *passphrase = keychain_read_passphrase(p->name, true);
+#endif
+        return pkcs11_open_session (p, slotidx, passphrase );
+    }
+    return 0;
 }
 
 /*
